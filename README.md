@@ -12,4 +12,7 @@ Analizar qué asociaciones descriptivas y ajustadas existen entre las amenazas n
 * **Estructura muestral:** Muestra común de $6.747$ observaciones ($5.360$ en entrenamiento y $1.387$ en prueba) con validación cruzada de $5$ pliegues predeterminados.
 
 ---
-
+## 🛠️ Herramientas y Reproducibilidad
+* **Lenguaje y Entorno:** R, RStudio
+* **Paquetes utilizados:** `dplyr`, `tidyr`, `ggplot2`, `scales`, `lmtest`, `car`, `glmnet`, `tseries`, `reshape2`
+* **Documentación:** Overleaf (LaTeX), GitHub
