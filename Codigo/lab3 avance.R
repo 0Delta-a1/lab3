@@ -1200,6 +1200,7 @@ cat("Ridge:", sum(coef_ridge[-1, 1] != 0), "/", nrow(coef_ridge) - 1, "\n")
 cat("LASSO:", sum(coef_lasso[-1, 1] != 0), "/", nrow(coef_lasso) - 1, "\n")
 cat("Elastic Net:", sum(coef_enet[-1, 1] != 0), "/", nrow(coef_enet) - 1, "\n")
 
+
 # Función auxiliar para graficar trayectorias vs log(lambda) (invertido hacia la derecha)
 plot_trayectoria_log <- function(cv_obj, titulo) {
   fit <- cv_obj$glmnet.fit
@@ -1387,69 +1388,62 @@ print(tabla_comparacion_final)
 
 
 
-# ============================================================
-# EDA - CASO B: AMENAZAS NATURALES Y GANANCIAS
-# Modelo seleccionado: Elastic Net
-# ============================================================
-
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(scales)
 
 # ============================================================
-# 1. PREPARACIÓN DE LOS DATOS
+# EDA: PROBLEMA AMBIENTAL
 # ============================================================
 
-# Utilizar el conjunto de entrenamiento
-datos_eda <- train %>%
+
+# Se trabaja con la muestra de entrenamiento
+datos_eda <- train
+
+# Etiquetas descriptivas de las amenazas
+etiquetas_amenazas <- c(
+  m2_1 = "Sequías y heladas",
+  m2_2 = "Inundaciones y aluviones",
+  m2_3 = "Incendios forestales",
+  m2_4 = "Tormentas, lluvias y vientos"
+)
+
+# Verificar variables necesarias
+variables_eda <- c(
+  "ganancia_final",
+  "m2_1", "m2_2", "m2_3", "m2_4",
+  "region"
+)
+
+stopifnot(all(variables_eda %in% names(datos_eda)))
+
+
+# ============================================================
+# a) DISTRIBUCIÓN DE GANANCIAS:
+#    NEGOCIOS CON Y SIN AMENAZAS
+# ============================================================
+
+# Crear variable que identifica si el negocio presenta
+# al menos una de las cuatro amenazas ambientales
+
+datos_eda <- datos_eda %>%
   mutate(
-    # Identificar negocios con y sin amenazas
-    alguna_amenaza = case_when(
-      if_any(c(m2_1, m2_2, m2_3, m2_4), ~ . == 1) ~ "Con amenazas",
-      
-      if_all(c(m2_1, m2_2, m2_3, m2_4), ~ . == 0) ~ "Sin amenazas",
-      
+    grupo_amenazas = case_when(
+      if_any(c(m2_1, m2_2, m2_3, m2_4), ~ .x == 1) ~ "Con amenazas",
+      if_all(c(m2_1, m2_2, m2_3, m2_4), ~ .x == 0) ~ "Sin amenazas",
       TRUE ~ NA_character_
-    ),
-    
-    alguna_amenaza = factor(
-      alguna_amenaza,
-      levels = c("Sin amenazas", "Con amenazas")
-    ),
-    
-    # Rama económica
-    c1_b = factor(
-      c1_b,
-      levels = 1:6,
-      labels = c(
-        "Agropecuario y forestal",
-        "Manufactura",
-        "Construcción",
-        "Comercio",
-        "Transporte",
-        "Otros"
-      )
-    ),
-    
-    # Región
-    region = factor(region)
+    )
   )
 
+datos_eda$grupo_amenazas <- factor(
+  datos_eda$grupo_amenazas,
+  levels = c("Sin amenazas", "Con amenazas")
+)
 
-# ============================================================
-# 2. a) DISTRIBUCIÓN DE GANANCIAS CON Y SIN AMENAZAS
-# ============================================================
 
-# Tabla de estadísticos descriptivos
-tabla_ganancias <- datos_eda %>%
-  filter(
-    !is.na(alguna_amenaza),
-    !is.na(ganancia_final)
-  ) %>%
-  group_by(alguna_amenaza) %>%
+# Resumen de ganancias por grupo
+resumen_ganancias <- datos_eda %>%
+  filter(!is.na(grupo_amenazas), !is.na(ganancia_final)) %>%
+  group_by(grupo_amenazas) %>%
   summarise(
-    n = n(),
+    Observaciones = n(),
     Media = mean(ganancia_final),
     Mediana = median(ganancia_final),
     Q1 = quantile(ganancia_final, 0.25),
@@ -1459,13 +1453,41 @@ tabla_ganancias <- datos_eda %>%
     .groups = "drop"
   )
 
-print(tabla_ganancias)
+print(resumen_ganancias)
+
+
+# Boxplot de ganancias según presencia de amenazas
+ggplot(
+  datos_eda %>%
+    filter(!is.na(grupo_amenazas), !is.na(ganancia_final)),
+  aes(x = grupo_amenazas, y = ganancia_final,
+      fill = grupo_amenazas)
+) +
+  geom_boxplot(alpha = 0.75, outlier.alpha = 0.3) +
+  labs(
+    title = "Distribución de ganancias según presencia de amenazas",
+    x = "Presencia de amenazas ambientales",
+    y = "Ganancia final"
+  ) +
+  scale_y_continuous(labels = scales::label_comma(big.mark = ".")) +
+  scale_fill_manual(
+    values = c("Sin amenazas" = "#56B4E9",
+               "Con amenazas" = "#E69F00")
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
 
 # ============================================================
-# 3. b) FRECUENCIAS DE LAS CUATRO AMENAZAS NATURALES
+# b) FRECUENCIAS DE LAS CUATRO AMENAZAS Y CRUCES
+#    POR SECTOR ECONÓMICO
 # ============================================================
 
-# Tabla de frecuencias generales
+# Comprobar que existe la variable de sector económico.
+# En este código se utiliza c1_b como sector.
+stopifnot("c1_b" %in% names(datos_eda))
+
+# Transformar las cuatro amenazas a formato largo
 frecuencias_amenazas <- datos_eda %>%
   select(m2_1, m2_2, m2_3, m2_4) %>%
   pivot_longer(
@@ -1473,256 +1495,189 @@ frecuencias_amenazas <- datos_eda %>%
     names_to = "Amenaza",
     values_to = "Respuesta"
   ) %>%
-  filter(!is.na(Respuesta)) %>%
-  group_by(Amenaza) %>%
-  summarise(
-    Total = n(),
-    Casos_Si = sum(Respuesta == 1),
-    Porcentaje_Si = 100 * mean(Respuesta == 1),
-    .groups = "drop"
-  )
-
-print(frecuencias_amenazas)
-
-
-# Gráfico de frecuencias
-datos_amenazas <- datos_eda %>%
-  select(m2_1, m2_2, m2_3, m2_4) %>%
-  pivot_longer(
-    cols = everything(),
-    names_to = "Amenaza",
-    values_to = "Respuesta"
-  ) %>%
-  filter(!is.na(Respuesta)) %>%
-  group_by(Amenaza) %>%
-  summarise(
-    Frecuencia = sum(Respuesta == 1),
-    .groups = "drop"
-  )
-
-ggplot(
-  datos_amenazas,
-  aes(x = Amenaza, y = Frecuencia)
-) +
-  geom_col() +
-  labs(
-    title = "Frecuencia de las amenazas naturales declaradas",
-    x = "Tipo de amenaza",
-    y = "Número de negocios"
-  ) +
-  theme_minimal()
-
-
-# ============================================================
-# 4. b) AMENAZAS NATURALES SEGÚN RAMA ECONÓMICA
-# ============================================================
-
-# Tabla de porcentajes por rama económica
-amenazas_sector <- datos_eda %>%
-  select(c1_b, m2_1, m2_2, m2_3, m2_4) %>%
-  pivot_longer(
-    cols = c(m2_1, m2_2, m2_3, m2_4),
-    names_to = "Amenaza",
-    values_to = "Respuesta"
-  ) %>%
-  filter(
-    !is.na(c1_b),
-    !is.na(Respuesta)
-  ) %>%
-  group_by(c1_b, Amenaza) %>%
-  summarise(
-    Total = n(),
-    Casos_Si = sum(Respuesta == 1),
-    Porcentaje_Si = 100 * mean(Respuesta == 1),
-    .groups = "drop"
-  )
-
-print(amenazas_sector)
-
-
-# Gráfico de amenazas por rama económica
-ggplot(
-  amenazas_sector,
-  aes(x = c1_b, y = Porcentaje_Si)
-) +
-  geom_col() +
-  facet_wrap(~ Amenaza) +
-  labs(
-    title = "Amenazas naturales según rama económica",
-    x = "Rama económica",
-    y = "Negocios que declaran la amenaza (%)"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(
-      angle = 45,
-      hjust = 1
-    )
-  )
-
-
-# ============================================================
-# 6. c) PRESENCIA DE AMENAZAS NATURALES POR REGIÓN
-# ============================================================
-
-# Porcentaje de negocios con amenazas por región
-tabla_amenazas_region <- datos_eda %>%
-  filter(
-    !is.na(region),
-    !is.na(alguna_amenaza)
-  ) %>%
-  group_by(region) %>%
-  summarise(
-    Total = n(),
-    Negocios_con_amenazas = sum(
-      alguna_amenaza == "Con amenazas"
-    ),
-    Porcentaje_con_amenazas =
-      100 * mean(alguna_amenaza == "Con amenazas"),
-    .groups = "drop"
-  )
-
-print(tabla_amenazas_region)
-
-
-# Gráfico de presencia de amenazas por región
-ggplot(
-  tabla_amenazas_region,
-  aes(
-    x = region,
-    y = Porcentaje_con_amenazas
-  )
-) +
-  geom_col() +
-  labs(
-    title = "Presencia de amenazas naturales por región",
-    x = "Región",
-    y = "Negocios con amenazas (%)"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(
-      angle = 45,
-      hjust = 1
-    )
-  )
-
-
-# ============================================================
-# FIN DEL EDA
-# ============================================================
-
-# ============================================================
-# TABLA DE FRECUENCIAS GENERALES
-# ============================================================
-
-amenazas_sector <- datos_eda %>%
-  select(c1_b, m2_1, m2_2, m2_3, m2_4) %>%
-  pivot_longer(
-    cols = c(m2_1, m2_2, m2_3, m2_4),
-    names_to = "Amenaza",
-    values_to = "Respuesta"
-  ) %>%
-  filter(
-    !is.na(c1_b),
-    !is.na(Respuesta)
-  ) %>%
-  group_by(c1_b, Amenaza) %>%
-  summarise(
-    Total = n(),
-    Casos_Si = sum(Respuesta == 1),
-    Porcentaje_Si = 100 * mean(Respuesta == 1),
-    .groups = "drop"
-  ) %>%
+  filter(Respuesta == 1) %>%
+  count(Amenaza, name = "Casos_Si") %>%
   mutate(
     Amenaza = case_when(
       Amenaza == "m2_1" ~ "Sequías y heladas",
       Amenaza == "m2_2" ~ "Inundaciones y aluviones",
       Amenaza == "m2_3" ~ "Incendios forestales",
-      Amenaza == "m2_4" ~ "Tormentas, lluvias y vientos",
-      TRUE ~ Amenaza
+      Amenaza == "m2_4" ~ "Tormentas, lluvias y vientos"
     )
   )
+
+print(frecuencias_amenazas)
+print(frecuencias_amenazas)
+
+
+
+# Gráfico de frecuencias de las amenazas
+ggplot(
+  frecuencias_amenazas,
+  aes(x = reorder(Amenaza, Casos_Si), y = Casos_Si)
+) +
+  geom_col(fill = "#3B82A0") +
+  geom_text(
+    aes(label = scales::comma(Casos_Si, big.mark = ".")),
+    vjust = -0.4,
+    size = 3.5
+  ) +
+  coord_flip() +
+  labs(
+    title = "Frecuencia de amenazas ambientales",
+    x = "Tipo de amenaza",
+    y = "Número de negocios que reportan la amenaza"
+  ) +
+  theme_minimal()
+
+# Cruce de amenazas por sector económico
+amenazas_sector <- datos_eda %>%
+  select(c1_b, m2_1, m2_2, m2_3, m2_4) %>%
+  pivot_longer(
+    cols = c(m2_1, m2_2, m2_3, m2_4),
+    names_to = "Amenaza",
+    values_to = "Respuesta"
+  ) %>%
+  filter(Respuesta == 1, !is.na(c1_b)) %>%
+  mutate(
+    Amenaza = case_when(
+      Amenaza == "m2_1" ~ "Sequías y heladas",
+      Amenaza == "m2_2" ~ "Inundaciones y aluviones",
+      Amenaza == "m2_3" ~ "Incendios forestales",
+      Amenaza == "m2_4" ~ "Tormentas, lluvias y vientos"
+    )
+  ) %>%
+  count(c1_b, Amenaza, name = "Casos_Si")
 
 print(amenazas_sector)
 
 
-
-
-# ============================================================
-# GRÁFICO 1: FRECUENCIA DE LAS CUATRO AMENAZAS
-# ============================================================
-
+# Gráfico de amenazas por sector económico
 ggplot(
-  frecuencias_amenazas,
-  aes(
-    x = reorder(Amenaza, Casos_Si),
-    y = Casos_Si
-  )
+  amenazas_sector,
+  aes(x = c1_b, y = Casos_Si, fill = Amenaza)
 ) +
-  geom_col(fill = "steelblue") +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Amenazas ambientales según sector económico",
+    x = "Sector económico",
+    y = "Número de negocios",
+    fill = "Amenaza"
+  ) +
+  scale_y_continuous(labels = scales::label_comma(big.mark = ".")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+
+
+# ============================================================
+# c) VARIACIÓN REGIONAL Y PRECAUCIÓN CAUSAL
+# ============================================================
+
+# Resumen regional de ganancias
+resumen_regional <- datos_eda %>%
+  filter(!is.na(region), !is.na(ganancia_final)) %>%
+  group_by(region) %>%
+  summarise(
+    Observaciones = n(),
+    Media = mean(ganancia_final),
+    Mediana = median(ganancia_final),
+    Q1 = quantile(ganancia_final, 0.25),
+    Q3 = quantile(ganancia_final, 0.75),
+    Desviacion = sd(ganancia_final),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(Mediana))
+
+print(resumen_regional)
+
+
+# Boxplot de ganancias por región
+ggplot(
+  datos_eda %>%
+    filter(!is.na(region), !is.na(ganancia_final)),
+  aes(x = factor(region), y = ganancia_final)
+) +
+  geom_boxplot(fill = "#70AD91", alpha = 0.8,
+               outlier.alpha = 0.25) +
+  labs(
+    title = "Distribución de ganancias según región",
+    x = "Región",
+    y = "Ganancia final"
+  ) +
+  scale_y_continuous(labels = scales::label_comma(big.mark = ".")) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+# Frecuencia de negocios por región
+frecuencia_regional <- datos_eda %>%
+  filter(!is.na(region)) %>%
+  count(region, name = "Negocios")
+
+print(frecuencia_regional)
+
+
+# Gráfico de cantidad de negocios por región
+ggplot(
+  frecuencia_regional,
+  aes(x = factor(region), y = Negocios)
+) +
+  geom_col(fill = "#8C78A8") +
   geom_text(
-    aes(
-      label = scales::comma(
-        Casos_Si,
-        big.mark = ".",
-        decimal.mark = ","
-      )
-    ),
-    vjust = -0.4,
-    size = 3.5
+    aes(label = Negocios),
+    vjust = -0.3,
+    size = 3
   ) +
   labs(
-    title = "Frecuencia de amenazas naturales declaradas",
-    x = "Tipo de amenaza",
+    title = "Cantidad de negocios por región",
+    x = "Región",
     y = "Número de negocios"
   ) +
   theme_minimal() +
   theme(
-    axis.text.x = element_text(
-      angle = 25,
-      hjust = 1
-    )
+    axis.text.x = element_text(angle = 45, hjust = 1)
   )
 
 
 
-# ============================================================
-# GRÁFICO 2: AMENAZAS SEGÚN SECTOR ECONÓMICO
-# ============================================================
+
+resumen_regional <- datos_eda %>%
+  filter(!is.na(region), !is.na(ganancia_final)) %>%
+  group_by(region) %>%
+  summarise(
+    Negocios = n(),
+    Media = mean(ganancia_final),
+    Mediana = median(ganancia_final),
+    Q1 = quantile(ganancia_final, 0.25),
+    Q3 = quantile(ganancia_final, 0.75),
+    .groups = "drop"
+  ) %>%
+  arrange(region)
+
+print(resumen_regional)
 
 ggplot(
-  amenazas_sector,
-  aes(
-    x = c1_b,
-    y = Porcentaje_Si
-  )
+  datos_eda %>% filter(!is.na(region), !is.na(ganancia_final)),
+  aes(x = factor(region), y = ganancia_final)
 ) +
-  geom_col(fill = "steelblue") +
-  geom_text(
-    aes(
-      label = paste0(round(Porcentaje_Si, 1), "%")
-    ),
-    vjust = -0.3,
-    size = 2.8
-  ) +
-  facet_wrap(~Amenaza) +
+  geom_boxplot(fill = "#70AD91", outlier.alpha = 0.25) +
   labs(
-    title = "Amenazas naturales según rama económica",
-    x = "Sector económico",
-    y = "Negocios que declaran la amenaza (%)"
+    title = "Distribución de ganancias según región",
+    x = "Región",
+    y = "Ganancia mensual (CLP)"
   ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(
-      angle = 45,
-      hjust = 1,
-      size = 8
-    ),
-    strip.text = element_text(
-      face = "bold"
-    )
-  )
+  scale_y_continuous(
+    labels = scales::label_comma(big.mark = ".", decimal.mark = ",")
+  ) +
+  theme_minimal()
+# ============================================================
+# FIN DEL EDA: PROBLEMA AMBIENTAL
+# ============================================================
 
 
 
@@ -1730,3 +1685,7 @@ ggplot(
 
 
 
+
+
+
+sessionInfo()
